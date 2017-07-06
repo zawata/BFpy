@@ -1,24 +1,28 @@
 # BFpy
 a BrainFuck Interpreter written in Python
 
-# Implementation Details
+# Default Implementation Details
+
+Though some of these can be edited and will change, these are the defaults
 
     Left Cells             = Unbounded
     Right Cells            = Unbounded
-    Cell Size              = 64b
-    NewLine                = 0x10
-    Right Brace Check      = True
-    EOF                    = !
+    Cell Size              = 8b
+    NewLine                = Python Default
+    Right Brace Check      = False
+    End of Code            = !
     Comments               = #Comment#
     Spaces, tabs, newlines = allowed
-    Invalid Characters     = warn
+    Invalid Characters     = silent
 
 # Upcoming Features
 
- - running from BF Files
+ - ~~running from BF Files~~
  - Runtime Input Prompts
- - Output Buffer Flushing
  - Better General IO Stuff
- - Interpreter Re-configurations
- - Command Line Options
+ - More Configuration Options
+ - Loading Configurations from BF Scripts
+ - ~~Interpreter Re-configurations~~
+ - ~~Command Line Options~~
+ - More Command Line Options
  - Maybe written in a faster language?
