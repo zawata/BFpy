@@ -25,4 +25,3 @@ Though some of these can be edited and will change, these are the defaults
  - ~~Interpreter Re-configurations~~
  - ~~Command Line Options~~
  - More Command Line Options
- - Maybe written in a faster language?
