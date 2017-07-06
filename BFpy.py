@@ -1,44 +1,10 @@
+#!/usr/bin/python
+
 import sys
+import getopt
 
-##########################
-# Implementation Details #
-##########################
-
-# Left Cells             = Unbounded
-# Right Cells            = Unbounded
-# Cell Size              = 64b
-# NewLine                = 0x10
-# Right Brace Check      = True
-# EOF                    = !
-# Comments               = #Comment#
-# Invalid Characters     = warn
-# Spaces, tabs, newlines = allowed
-
-#####################
-# Upcoming Features #
-#####################
-
-# running from BF Files
-# Runtime Input Prompts
-# Output Buffer Flushing
-# Better General IO Stuff
-# Interpreter Re-configurations
-# Command Line Options
-# Maybe written in a faster language?
-
-test1 = '+++++>>[-]<<[->>+<<]!'
-
-test2='++++++++[> \
-       ++++[>++>+ \
-       ++>+++>+<< \
-       <<-]>+>+>- \
-       >>+[<]<-]> \
-       >.>---.+++ \
-       ++++..+++. \
-       >>.<-.<.++ \
-       +.------.- \
-       -------.>> \
-       +.>++.!'
+from Config.Config import *
+from binascii import unhexlify
 
 class Singleton(type):
     """
@@ -50,14 +16,8 @@ class Singleton(type):
             cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
         return cls._instances[cls]
 
-class loopElem:
-    char = '['
-    cVal = 0
-    def __init__(self, char, cVal):
-        self.char = char
-        self.cVal = cVal
-    def getVal(self):
-        return self.cVal
+    def __str__(self):
+        return "({0},{1})".format(self.char, self.cVal)
 
 class ioShim(metaclass = Singleton):
     """
@@ -86,31 +46,40 @@ class Data(metaclass = Singleton):
     Includes commands for simplified implementation.
     """
     dp = 0
+    size = [0, 0] # Cells on the left and right side, respectively
     L = [0]
 
     def _append(self):
         self.L.append(0)
+        self.size[1] += 1
 
     def _prepend(self):
         self.L.insert(0, 0)
+        self.size[0] += 1
         self.dp += 1
 
-    def _data(self):
+    def data(self):
         return [self.dp, self.L]
 
-    def incD(self):
-        self.L[self.dp]+=1
+    def incD(self, config):
+        if int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big') == self.L[self.dp]:
+            self.L[self.dp] = 0
+        else:
+            self.L[self.dp] += 1
 
-    def decD(self):
-        self.L[self.dp]-=1
+    def decD(self, config):
+        if self.L[self.dp] == 0:
+            self.L[self.dp] = int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big')
+        else:
+            self.L[self.dp] -= 1
 
-    def incP(self):
-        self.dp+=1
+    def incP(self, config):
+        self.dp += 1
         if self.dp == len(self.L):
             self._append()
 
-    def decP(self):
-        self.dp-=1
+    def decP(self, config):
+        self.dp -= 1
         if self.dp == -1:
             self._prepend()
 
@@ -125,24 +94,22 @@ class Data(metaclass = Singleton):
     def nonzero(self):
         return self.L[self.dp] != 0
 
-EList = [
+def problem(num, exitF):
+    EList = [
         "Error with Error Function?",
         "Orphaned Right Brace.",
         "Unmatched Left Brace.",
         "No EOC Indicator.",
         "Invalid Character."
-]
-def problem(num, exitF):
+    ]
     print("Error {0}: {1}".format(num, EList[num]), end='  ')
     if exitF:
         exit(num)
     else:
         print('Continuing...', end='  ')
 
-
-def interpret(t):
+def interpret(t, conf):
     Comment_Flag = False
-    Debug_Flag = True
     No_NewLine_Flag = False
 
     i = 0
@@ -153,80 +120,165 @@ def interpret(t):
         except IndexError:
             problem(3,False)
             break
-        if Debug_Flag and not c in " \n\t":
-            print(c, end='  ')
+        if conf.Debug_Flag:
+            if Comment_Flag or c == '#':
+                print(c, end='')
+            elif not c in " \n\t":
+                print(c, end='  ')
+                print(i, end='  ')
         if Comment_Flag:
             if c == '#':
                 Comment_Flag = False
-            else:
-                pass
+                if conf.Debug_Flag:
+                    print()
+            # if the continue isn't here, then when the comment ends
+            # the loop advances into the instruction handler 
+            # with the ending comment symbol as the current instruction,
+            # putting the interpreter back in comment mode
+
+            # The continue wont go to the bottom
+            # of the loop so we need to increment the IP ourselves
+
+            i += 1
+            continue
         if not Comment_Flag:
             if c == '+':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
-                Data().incD()
+                if conf.Debug_Flag:
+                    print(*Data().data(), end='  ')
+                Data().incD(conf)
             elif c == '-':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
-                Data().decD()
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
+                Data().decD(conf)
+
             elif c == '>':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
-                Data().incP()
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
+                Data().incP(conf)
+
             elif c == '<':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
-                Data().decP()
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
+                Data().decP(conf)
+
             elif c == '.':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
                 Data().write()
+
             elif c == ',':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
                 Data().read()
+
             elif c == '[':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
-                LoopStack.append(loopElem('[',i))
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
+                if len(LoopStack) == 0:
+                    LoopStack.append(i)
+                elif LoopStack[-1] != i:
+                    LoopStack.append(i)
                 if not Data().nonzero():
                     LoopStack.pop()
-                    while(t[i] != ']'):
-                        i+= 1
+                    tempLoopStack = []
+                    while True:
+                        i += 1
+                        if t[i] == '[':
+                            tempLoopStack.append('[')
+                        elif t[i] == ']':
+                            if len(tempLoopStack) == 0:
+                                if conf.Debug_Flag:
+                                    print("jumping to {0}".format(i), end=' ')
+                                break
+                            else:
+                                tempLoopStack.pop()
             elif c == ']':
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
                 if len(LoopStack) == 0:
                     problem(1, True)
-                elif Data().nonzero():
-                    i = LoopStack[len(LoopStack)-1].getVal()
+                #elif Data().nonzero():
                 else:
-                    LoopStack.pop()
+                    i = LoopStack[len(LoopStack)-1] - 1
+
             elif c == '!':
-                if Debug_Flag:
+                if conf.Debug_Flag:
                     print("End")
                 if len(LoopStack) != 0:
                     problem(2, True)
                 else:
                     break
+
             elif c == '#':
+                No_NewLine_Flag = True
                 Comment_Flag = True
+
             elif c in " \n\t" :
-                if Debug_Flag:
+                if conf.Debug_Flag:
                     No_NewLine_Flag = True
+
             else:
-                if Debug_Flag:
-                    print(*Data()._data(), end = '  ')
+                if conf.Debug_Flag:
+                    print(*Data().data(), end = '  ')
                     problem(4, False)
                 #More in the future
-        if not No_NewLine_Flag and Debug_Flag:
+
+        if not No_NewLine_Flag and conf.Debug_Flag:
             print()
             No_NewLine_Flag = False
-        if Debug_Flag:
+        if conf.Debug_Flag:
             No_NewLine_Flag = False
         i += 1
 
+def help():
+    print('BFpy.py [-d] <inputfile>')
+    print(' -h, --help       This Help Screen')
+    print(' -i, --input      Input File')
+    print(' -d, --Debug      Debug Mode')
+
+def main(argv):
+    Execution_Flag = False
+
+    inputfile = ''
+    con = Config()
+
+    iargs = [
+        (
+            ("h", "help"),
+            ("-h", "--help")),
+        (
+            ("i:", "input="),
+            ("-i", "--input")),
+        (
+            ("d", "debug"),
+            ("-d", "--debug"))
+    ]
+
+    try:
+        opts, args = getopt.getopt(
+                argv,
+                ''.join([x[0][0] for x in iargs]), # first member of every tuple in the list, joined into a string
+                [x[0][1] for x in iargs])          # second member of every tuple in the list, kept as a list
+    except getopt.GetoptError:
+        print('BFpy.py [-d] -i:<inputfile>')
+        sys.exit(2)
+
+    for opt, arg in opts:
+        if opt in iargs[0][1]:  #help
+            help()
+            sys.exit(0)
+        elif opt in iargs[1][1]: #input
+            inputfile = arg
+        elif opt in iargs[2][1]: #debug
+            con.Debug_Flag = True
+
+    if inputfile:
+        with open(inputfile) as file:
+            interpret(file.read().replace('\n', ''), con)
+    else:
+        help()
+        sys.exit(0)
 
 if __name__ == "__main__":
-    interpret(test2)
+    main(sys.argv[1:])
     print(ioShim().Print())
