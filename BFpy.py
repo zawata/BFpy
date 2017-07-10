@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 import sys
+import queue
 import getopt
 
 from Config.Config import *
@@ -23,26 +24,37 @@ class ioShim(metaclass = Singleton):
     """
     String-based IO class for delayed/controlled printing
     """
-    inputBuffer = []
-    outputBuffer = []
+
+    def __init__(self):
+        self.inputBuffer = queue.Queue()
+        self.outputBuffer = queue.Queue()
 
     def setInput(self, strIn):
-        self.input = list(strIn)
+        for c in strIn:
+            self.inputBuffer.put(c)
 
-    def Read(self):
-        c = self.inputBuffer[0]
-        del self.inputBuffer[0]
-        return ord(c)
+    def Read(self, conf):
+        if conf.Realtime_Input_Flag:
+            c = input('bf> ')[0]
+            if c == '':
+                c = '\n'
+        else:
+            c = self.inputBuffer.get()
+        if c == '\n':
+            return 10
+        else:
+            return ord(c)
 
-    def Write(self, c):
-        self.outputBuffer.append(chr(c))
-
-    def Print(self):
-        return ''.join(self.outputBuffer)
+    def Write(self, c, conf):
+        if conf.Buffered_Output_Flag:
+            self.outputBuffer.put(chr(c))
+        else:
+            print(chr(c), end='', flush=True)
 
 class Data(metaclass = Singleton):
     """
     Tape Reel Object Class
+
     Includes commands for simplified implementation.
     """
     dp = 0
@@ -62,16 +74,18 @@ class Data(metaclass = Singleton):
         return [self.dp, self.L]
 
     def incD(self, config):
-        if int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big') == self.L[self.dp]:
-            self.L[self.dp] = 0
-        else:
-            self.L[self.dp] += 1
+        if config.Cell_Size != -1:
+            if int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big') == self.L[self.dp]:
+                self.L[self.dp] = 0
+                return
+        self.L[self.dp] += 1
 
     def decD(self, config):
-        if self.L[self.dp] == 0:
-            self.L[self.dp] = int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big')
-        else:
-            self.L[self.dp] -= 1
+        if config.Cell_Size != -1:
+            if self.L[self.dp] == 0:
+                self.L[self.dp] = int.from_bytes(unhexlify('FF' * config.Cell_Size), byteorder='big')
+                return
+        self.L[self.dp] -= 1
 
     def incP(self, config):
         self.dp += 1
@@ -83,13 +97,12 @@ class Data(metaclass = Singleton):
         if self.dp == -1:
             self._prepend()
 
-    def write(self):
-        #sys.stdout.write(self.L[self.dp])
-        ioShim().Write(self.L[self.dp])
+    def write(self, conf):
+        ioShim().Write(self.L[self.dp], conf)
 
-    def read(self):
-        #self.L[self.dp] = sys.stdin.read(1)
-        self.L[self.dp] = ioShim().Read()
+    def read(self, conf):
+        self.L[self.dp] = ioShim().Read(conf)
+        return self.L[self.dp]
 
     def nonzero(self):
         return self.L[self.dp] != 0
@@ -109,12 +122,14 @@ def problem(num, exitF):
         print('Continuing...', end='  ')
 
 def interpret(t, conf):
-    Comment_Flag = False
+    Comment_Flag    = False
     No_NewLine_Flag = False
+    BreakPoint_Flag = False
 
     i = 0
     LoopStack = []
     while True:
+        Debug_Info = ['','','','','']
         try:
             c = t[i]
         except IndexError:
@@ -122,17 +137,15 @@ def interpret(t, conf):
             break
         if conf.Debug_Flag:
             if Comment_Flag or c == '#':
-                print(c, end='')
+                Debug_Info[0] = str(c).rjust(4)
             elif not c in " \n\t":
-                print(c, end='  ')
-                print(i, end='  ')
+                Debug_Info[0] = str(c).rjust(4)
+            Debug_Info[1] = str(i).rjust(4)
         if Comment_Flag:
             if c == '#':
                 Comment_Flag = False
-                if conf.Debug_Flag:
-                    print()
             # if the continue isn't here, then when the comment ends
-            # the loop advances into the instruction handler 
+            # the loop advances into the instruction handler
             # with the ending comment symbol as the current instruction,
             # putting the interpreter back in comment mode
 
@@ -143,37 +156,24 @@ def interpret(t, conf):
             continue
         if not Comment_Flag:
             if c == '+':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end='  ')
                 Data().incD(conf)
             elif c == '-':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
                 Data().decD(conf)
-
             elif c == '>':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
                 Data().incP(conf)
-
             elif c == '<':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
                 Data().decP(conf)
-
             elif c == '.':
                 if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
-                Data().write()
-
+                    Debug_Info[4] = "Print: {}".format(chr(Data().data()[1][Data().data()[0]]))
+                else:
+                    Data().write(conf)
             elif c == ',':
                 if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
-                Data().read()
-
+                    Debug_Info[4] = "Reading: {}".format(chr(Data().read(conf)))
+                else:
+                    Data().read(conf)
             elif c == '[':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
                 if len(LoopStack) == 0:
                     LoopStack.append(i)
                 elif LoopStack[-1] != i:
@@ -188,46 +188,48 @@ def interpret(t, conf):
                         elif t[i] == ']':
                             if len(tempLoopStack) == 0:
                                 if conf.Debug_Flag:
-                                    print("jumping to {0}".format(i), end=' ')
+                                    Debug_Info[4]  = "jumping to {0}".format(i + 1)
                                 break
                             else:
                                 tempLoopStack.pop()
             elif c == ']':
-                if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
                 if len(LoopStack) == 0:
                     problem(1, True)
-                #elif Data().nonzero():
                 else:
                     i = LoopStack[len(LoopStack)-1] - 1
-
             elif c == '!':
                 if conf.Debug_Flag:
-                    print("End")
+                    Debug_Info[4] = "End"
                 if len(LoopStack) != 0:
                     problem(2, True)
                 else:
                     break
-
             elif c == '#':
                 No_NewLine_Flag = True
                 Comment_Flag = True
-
+            elif c == '%':
+                if conf.Debug_Flag:
+                    Debug_Info[4] = "Breakpoint"
+                    BreakPoint_Flag = True
             elif c in " \n\t" :
                 if conf.Debug_Flag:
                     No_NewLine_Flag = True
-
             else:
                 if conf.Debug_Flag:
-                    print(*Data().data(), end = '  ')
+                    Debug_Info[4] = "Invalid Character"
                     problem(4, False)
                 #More in the future
 
         if not No_NewLine_Flag and conf.Debug_Flag:
-            print()
+            Debug_Info[2] = str(Data().data()[0]).rjust(4)
+            Debug_Info[3] = '['+','.join([str(x).rjust(4) for x in Data().data()[1]]) + ']'
+            print(*Debug_Info)
             No_NewLine_Flag = False
         if conf.Debug_Flag:
             No_NewLine_Flag = False
+        if BreakPoint_Flag:
+            BreakPoint_Flag = False
+            input('Press Enter to Continue.')
         i += 1
 
 def help():
@@ -251,7 +253,13 @@ def main(argv):
             ("-i", "--input")),
         (
             ("d", "debug"),
-            ("-d", "--debug"))
+            ("-d", "--debug")),
+        (
+            ("b", "buffer-ouput"),
+            ("-b", "--buffer-output"))
+        (
+            ("r", "realtime-input"),
+            ("-r", "--realtime-input"))
     ]
 
     try:
@@ -264,6 +272,7 @@ def main(argv):
         sys.exit(2)
 
     for opt, arg in opts:
+        #print(opt, arg)
         if opt in iargs[0][1]:  #help
             help()
             sys.exit(0)
@@ -271,6 +280,10 @@ def main(argv):
             inputfile = arg
         elif opt in iargs[2][1]: #debug
             con.Debug_Flag = True
+        elif opt in iargs[3][1]: #Buffer Output
+            con.Buffered_Output_Flag = True
+        elif opt in iargs[4][1]: #Buffer Input
+            con.Realtime_Input_Flag = True
 
     if inputfile:
         with open(inputfile) as file:
@@ -281,4 +294,3 @@ def main(argv):
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-    print(ioShim().Print())
